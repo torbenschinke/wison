@@ -1,0 +1,159 @@
+= the wison format
+:toc:
+Torben Schinke
+
+TODO: this to expensive to write, because
+all offets needs to be replaced after building
+the dictionary (at least a two-pass process and
+another heap buffer)
+
+_wison_ is the wiz variant of a JSON-like data serialization.
+In contrast to JSON, BSON, UBJSON or JSONB, Protobuf, Captn' Proto et. al. the encoding is optimized for large read-only key-sets in maps.
+This is achieved by a sorted list of offset pointers used as a fixed size indirection into the actual data set (for maps).
+Thus, an O(log n) inspection lookup performance can be easily implemented without complex parsers.
+A side effect is the possibility to deduplicate values by reusing pointers, but that is implementation dependent.
+A valid _wison_ document only has a single root element, of any defined data type below.
+The encoding is little endian.
+
+Every JSON document can be represented in a _wison_ document
+however not every _wison_ document is a json document.
+
+== datatypes
+
+The structure of a data type is always preceded by a type and depending on that with optional length and data section.
+
+[source]
+====
+type | length? | data?
+====
+
+=== null
+
+An untyped null.
+
+[source]
+====
+type = 1
+====
+
+=== string
+
+A string is always UTF-8 encoded.
+
+[source]
+====
+type = 2 | len = varuint | data = len bytes
+====
+
+=== blob
+
+A blob is an arbitrary byte sequence.
+
+[source]
+====
+type = 3 | len = varuint | data = len bytes
+====
+
+=== bool
+
+A bool is encoded directly in the constant.
+
+[source]
+====
+type = 4 (false)
+
+type = 5 (true)
+====
+
+=== int
+
+A signed integer is encoded as a protobuf variable integer encoding.
+
+[source]
+====
+type = 6 | varint
+====
+
+=== uint
+
+An unsigned integer is encoded in zigzag variable integer encoding.
+
+[source]
+====
+type = 7 | uvarint
+====
+
+=== float64
+
+A float64 is encoded in IEEE 754 binary representation.
+
+[source]
+====
+type = 8 | IEEE 754 (8 byte)
+====
+
+=== float32
+
+A float32 is encoded in IEEE 754 binary representation.
+
+[source]
+====
+type = 9 | IEEE 754 (4 byte)
+====
+
+=== uuid
+
+A 16 byte uuid special type.
+
+[source]
+====
+type = 10 | uuid (16 byte)
+====
+
+=== map
+
+A map consists solely of an ascending sorted list of data types.
+All key types must be of the same kind.
+The values are arbitrary.
+Note, that all key-value pairs are fixed 4 byte pointers.
+Thus read access is possible using binary search in O(log(n)).
+
+[source]
+====
+type = 11 | entries (uint32 4 byte) | (uint32ptr (4 byte) to key | uint32ptr (4 byte) to value)*
+====
+
+=== array
+
+An array is unsorted and may contain arbitrary types.
+Like the map, only pointers are contained and allow access in O(1).
+
+[source]
+====
+type = 12 | entries (uint32 4 byte) | (uint32ptr (4 byte) to value)*
+====
+
+=== data segment
+
+The data segment contains referenced data values from maps and arrays and is not considered part of the document.
+It is valid to have multiple data segments (e.g. by just appending).
+It is also valid that unreferenced data is contained or that data is referenced multiple times (e.g. deduplicated).
+However, it is not allowed that a data segment contains another data segments or documents (recursion).
+
+[source]
+====
+type = 13 | entries (uint32 4 byte) | len (uint32 4 byte) | (data types)*
+
+====
+
+=== document
+
+A document marks the beginning of a new document, followed by one or none data type and none or more data segments.
+Documents cannot be nested or part of a data segment.
+Per definition, it is valid, that a document contains no root type but unreferenced data segments (even if it does not make much sense).
+
+[source]
+====
+type = 14 | (type)? | (data segment)*
+
+====
